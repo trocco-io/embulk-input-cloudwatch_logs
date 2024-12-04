@@ -2,17 +2,17 @@ package org.embulk.input.cloudwatch_logs;
 
 import com.amazonaws.services.logs.AWSLogs;
 import com.amazonaws.services.logs.model.InputLogEvent;
-
-import org.embulk.EmbulkTestRuntime;
 import org.embulk.config.ConfigSource;
 import org.embulk.config.TaskReport;
 import org.embulk.config.TaskSource;
+import org.embulk.input.cloudwatch_logs.TestHelpers.CloudWatchLogsTestUtils;
 import org.embulk.spi.InputPlugin;
 import org.embulk.spi.PageBuilder;
 import org.embulk.spi.Schema;
-import org.embulk.spi.TestPageBuilderReader.MockPageOutput;
+import org.embulk.test.EmbulkTestRuntime;
+import org.embulk.test.TestPageBuilderReader.MockPageOutput;
 import org.embulk.test.TestingEmbulk;
-
+import org.embulk.util.config.ConfigMapper;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -20,15 +20,12 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.Mockito;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
-import org.embulk.input.cloudwatch_logs.TestHelpers;
-import org.embulk.input.cloudwatch_logs.TestHelpers.CloudWatchLogsTestUtils;
-
 import static org.embulk.input.cloudwatch_logs.CloudwatchLogsInputPlugin.CloudWatchLogsPluginTask;
+import static org.embulk.input.cloudwatch_logs.TestHelpers.CONFIG_MAPPER_FACTORY;
 import static org.junit.Assume.assumeNotNull;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.times;
@@ -47,16 +44,15 @@ public class TestAwsCredentials
     private CloudwatchLogsInputPlugin plugin;
 
     private ConfigSource config;
-    private MockPageOutput output = new MockPageOutput();
+    private final MockPageOutput output = new MockPageOutput();
     private PageBuilder pageBuilder;
     private String logGroupName;
     private String logStreamName;
-    private AWSLogs logsClient;
     private CloudWatchLogsTestUtils testUtils;
 
-    private static String EMBULK_LOGS_TEST_REGION;
-    private static String EMBULK_LOGS_TEST_ACCESS_KEY_ID;
-    private static String EMBULK_LOGS_TEST_SECRET_ACCESS_KEY;
+    private static String embulkLogsTestRegion;
+    private static String embulkLogsTestAccessKeyId;
+    private static String embulkLogsTestSecretAccessKey;
 
     /*
      * This test case requires environment variables:
@@ -68,14 +64,14 @@ public class TestAwsCredentials
     @BeforeClass
     public static void initializeConstantVariables()
     {
-        EMBULK_LOGS_TEST_REGION = System.getenv("EMBULK_LOGS_TEST_REGION");
-        EMBULK_LOGS_TEST_ACCESS_KEY_ID = System.getenv("EMBULK_LOGS_TEST_ACCESS_KEY_ID");
-        EMBULK_LOGS_TEST_SECRET_ACCESS_KEY = System.getenv("EMBULK_LOGS_TEST_SECRET_ACCESS_KEY");
-        assumeNotNull(EMBULK_LOGS_TEST_REGION, EMBULK_LOGS_TEST_ACCESS_KEY_ID, EMBULK_LOGS_TEST_SECRET_ACCESS_KEY);
+        embulkLogsTestRegion = System.getenv("EMBULK_LOGS_TEST_REGION");
+        embulkLogsTestAccessKeyId = System.getenv("EMBULK_LOGS_TEST_ACCESS_KEY_ID");
+        embulkLogsTestSecretAccessKey = System.getenv("EMBULK_LOGS_TEST_SECRET_ACCESS_KEY");
+        assumeNotNull(embulkLogsTestRegion, embulkLogsTestAccessKeyId, embulkLogsTestSecretAccessKey);
     }
 
     @Before
-    public void setUp() throws IOException
+    public void setUp()
     {
         logGroupName = TestHelpers.getLogGroupName();
         logStreamName = TestHelpers.getLogStreamName();
@@ -86,25 +82,26 @@ public class TestAwsCredentials
                     .set("type", "cloudwatch_logs")
                     .set("log_group_name", logGroupName)
                     .set("log_stream_name", logStreamName)
-                    .set("region", EMBULK_LOGS_TEST_REGION);
+                    .set("region", embulkLogsTestRegion);
             pageBuilder = Mockito.mock(PageBuilder.class);
             doReturn(pageBuilder).when(plugin).getPageBuilder(Mockito.any(), Mockito.any());
         }
     }
 
     @After
-    public void tearDown() throws IOException
+    public void tearDown()
     {
         if (testUtils != null) {
             testUtils.clearLogGroup();
         }
     }
 
-    private void doTest(ConfigSource config) throws IOException
+    private void doTest(ConfigSource config)
     {
-        CloudWatchLogsPluginTask task = config.loadConfig(CloudWatchLogsPluginTask.class);
-        CloudwatchLogsInputPlugin plugin = runtime.getInstance(CloudwatchLogsInputPlugin.class);
-        logsClient = plugin.newLogsClient(task);
+        ConfigMapper configMapper = CONFIG_MAPPER_FACTORY.createConfigMapper();
+        CloudWatchLogsPluginTask task = configMapper.map(config, CloudWatchLogsPluginTask.class);
+        CloudwatchLogsInputPlugin plugin = new CloudwatchLogsInputPlugin();
+        AWSLogs logsClient = plugin.newLogsClient(task);
         testUtils = new CloudWatchLogsTestUtils(logsClient, logGroupName, logStreamName);
 
         testUtils.createLogStream();
@@ -120,7 +117,9 @@ public class TestAwsCredentials
         testUtils.putLogEvents(events);
         try {
             Thread.sleep(10000);
-        } catch (InterruptedException e) {
+        }
+        catch (InterruptedException e) {
+            // NOP
         }
 
         plugin.transaction(config, new Control());
@@ -128,12 +127,12 @@ public class TestAwsCredentials
     }
 
     @Test
-    public void useBasic() throws IOException
+    public void useBasic()
     {
         ConfigSource config = this.config.deepCopy()
                 .set("authentication_method", "basic")
-                .set("aws_access_key_id", EMBULK_LOGS_TEST_ACCESS_KEY_ID)
-                .set("aws_secret_access_key", EMBULK_LOGS_TEST_SECRET_ACCESS_KEY);
+                .set("aws_access_key_id", embulkLogsTestAccessKeyId)
+                .set("aws_secret_access_key", embulkLogsTestSecretAccessKey);
         doTest(config);
     }
 
@@ -156,14 +155,14 @@ public class TestAwsCredentials
     }
 
     @Test
-    public void useProperties() throws IOException
+    public void useProperties()
     {
         String prevAccessKeyId = System.getProperty("aws.accessKeyId");
         String prevSecretKey = System.getProperty("aws.secretKey");
         try {
             ConfigSource config = this.config.deepCopy().set("authentication_method", "properties");
-            System.setProperty("aws.accessKeyId", EMBULK_LOGS_TEST_ACCESS_KEY_ID);
-            System.setProperty("aws.secretKey", EMBULK_LOGS_TEST_SECRET_ACCESS_KEY);
+            System.setProperty("aws.accessKeyId", embulkLogsTestAccessKeyId);
+            System.setProperty("aws.secretKey", embulkLogsTestSecretAccessKey);
             doTest(config);
         }
         finally {
