@@ -2,11 +2,12 @@ package org.embulk.input.cloudwatch_logs;
 
 import com.amazonaws.services.logs.AWSLogsClientBuilder;
 import com.amazonaws.services.logs.AWSLogs;
-import com.google.common.base.Optional;
 
-import org.embulk.config.Config;
-import org.embulk.config.ConfigDefault;
 import org.embulk.config.ConfigException;
+import org.embulk.util.config.Config;
+import org.embulk.util.config.ConfigDefault;
+
+import java.util.Optional;
 
 public class CloudwatchLogsInputPlugin
         extends AbstractCloudwatchLogsInputPlugin

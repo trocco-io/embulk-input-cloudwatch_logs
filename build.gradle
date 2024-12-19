@@ -1,12 +1,11 @@
 plugins {
-    id "com.jfrog.bintray" version "1.1"
     id "com.github.jruby-gradle.base" version "1.5.0"
     id "java"
     id "checkstyle"
+    id "org.embulk.embulk-plugins" version "0.5.5"
     id "com.palantir.git-version" version "3.0.0"
 }
 
-import com.github.jrubygradle.JRubyExec
 repositories {
     mavenCentral()
     jcenter()
@@ -28,19 +27,22 @@ sourceCompatibility = 1.8
 targetCompatibility = 1.8
 
 dependencies {
-    compile  "org.embulk:embulk-core:0.10.1"
-    provided "org.embulk:embulk-core:0.10.1"
+    def embulkVersion = "0.10.39"
+    compileOnly "org.embulk:embulk-api:${embulkVersion}"
+    compileOnly "org.embulk:embulk-spi:${embulkVersion}"
+    implementation "org.embulk:embulk-util-config:0.3.4"
+    implementation "org.embulk:embulk-util-timestamp:0.2.2"
     implementation "com.google.guava:guava:28.2-jre"
-    compile group: 'com.amazonaws', name: 'aws-java-sdk-logs', version: '1.11.749'
-    compile group: 'com.amazonaws', name: 'aws-java-sdk-sts', version: '1.11.749'
-    // compile "YOUR_JAR_DEPENDENCY_GROUP:YOUR_JAR_DEPENDENCY_MODULE:YOUR_JAR_DEPENDENCY_VERSION"
-    testCompile "junit:junit:4.+"
-    testCompile "org.mockito:mockito-core:1.+"
-    testCompile "org.embulk:embulk-core:0.10.1:tests"
-    testCompile "org.embulk:embulk-standards:0.10.1"
-    testCompile "org.embulk:embulk-junit4:0.10.1"
-    testCompile "org.embulk:embulk-deps-buffer:0.10.1"
-    testCompile "org.embulk:embulk-deps-config:0.10.1"
+    implementation group: 'com.amazonaws', name: 'aws-java-sdk-logs', version: '1.11.749'
+    implementation group: 'com.amazonaws', name: 'aws-java-sdk-sts', version: '1.11.749'
+
+    testImplementation "junit:junit:4.+"
+    testImplementation "org.mockito:mockito-core:1.+"
+    testImplementation "org.embulk:embulk-api:${embulkVersion}"
+    testImplementation "org.embulk:embulk-spi:${embulkVersion}"
+    testImplementation "org.embulk:embulk-core:${embulkVersion}"
+    testImplementation "org.embulk:embulk-deps:${embulkVersion}"
+    testImplementation "org.embulk:embulk-junit4:${embulkVersion}"
 }
 
 // add tests/javadoc/source jar tasks as artifacts to be released
@@ -57,11 +59,12 @@ task javadocJar(type: Jar, dependsOn: javadoc) {
     from javadoc.destinationDir
 }
 
-task classpath(type: Copy, dependsOn: ["jar"]) {
-    doFirst { file("classpath").deleteDir() }
-    from (configurations.runtime - configurations.provided + files(jar.archivePath))
-    into "classpath"
+embulkPlugin {
+    mainClass = "org.embulk.input.cloudwatch_logs.CloudwatchLogsInputPlugin"
+    category = "input"
+    type = "cloudwatch_logs"
 }
+
 clean { delete "classpath" }
 
 checkstyle {
@@ -81,54 +84,11 @@ task checkstyle(type: Checkstyle) {
     source = sourceSets.main.allJava + sourceSets.test.allJava
 }
 
-task gem(type: JRubyExec, dependsOn: ["gemspec", "classpath"]) {
-    jrubyArgs "-S"
-    script "gem"
-    scriptArgs "build", "${project.name}.gemspec"
-    doLast { ant.move(file: "${project.name}-${project.version}.gem", todir: "pkg") }
+gem {
+    from("LICENSE")  // Optional -- if you need other files in the gem.
+    authors = [ "d-hrs" ]
+    email = [ "s1150199@gmail.com" ]
+    summary = "output plugin for Embulk"
+    homepage = "https://github.com/primenumber-dev/embulk-output-"
+    licenses = [ "Apache-2.0" ]
 }
-
-task gemPush(type: JRubyExec, dependsOn: ["gem"]) {
-    jrubyArgs "-S"
-    script "gem"
-    scriptArgs "push", "pkg/${project.name}-${project.version}.gem"
-}
-
-task "package"(dependsOn: ["gemspec", "classpath"]) {
-    doLast {
-        println "> Build succeeded."
-        println "> You can run embulk with '-L ${file(".").absolutePath}' argument."
-    }
-}
-
-artifacts {
-    archives testsJar, sourcesJar, javadocJar
-}
-
-task gemspec {
-    ext.gemspecFile = file("${project.name}.gemspec")
-    inputs.file "build.gradle"
-    outputs.file gemspecFile
-    doLast { gemspecFile.write($/
-Gem::Specification.new do |spec|
-  spec.name          = "${project.name}"
-  spec.version       = "${project.version}"
-  spec.authors       = ["Hiroshi Hatake"]
-  spec.summary       = %[Cloudwatch Logs input plugin for Embulk]
-  spec.description   = %[Loads records from Cloudwatch Logs.]
-  spec.email         = ["cosmo0920.wp@gmail.com"]
-  spec.licenses      = ["MIT"]
-  spec.homepage      = "https://github.com/cosmo0920/embulk-input-cloudwatch_logs"
-
-  spec.files         = `git ls-files`.split("\n") + Dir["classpath/*.jar"]
-  spec.test_files    = spec.files.grep(%r"^(test|spec)/")
-  spec.require_paths = ["lib"]
-
-  #spec.add_dependency 'YOUR_GEM_DEPENDENCY', ['~> YOUR_GEM_DEPENDENCY_VERSION']
-  spec.add_development_dependency 'bundler', ['~> 1.0']
-  spec.add_development_dependency 'rake', ['~> 12.0']
-end
-/$)
-    }
-}
-clean { delete "${project.name}.gemspec" }

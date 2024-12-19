@@ -1,6 +1,6 @@
 package org.embulk.input.cloudwatch_logs.aws;
 
-import org.embulk.spi.unit.LocalFile;
+import org.embulk.util.config.units.LocalFile;
 
 import java.util.Optional;
 

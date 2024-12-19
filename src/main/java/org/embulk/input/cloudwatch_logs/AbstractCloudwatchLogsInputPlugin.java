@@ -1,22 +1,24 @@
 package org.embulk.input.cloudwatch_logs;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Optional;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
-
-import org.embulk.config.Config;
-import org.embulk.config.ConfigDefault;
+import java.util.Optional;
 
 import org.embulk.config.ConfigDiff;
 import org.embulk.config.ConfigException;
 import org.embulk.config.ConfigSource;
-import org.embulk.config.Task;
 import org.embulk.config.TaskReport;
 import org.embulk.config.TaskSource;
+import org.embulk.util.config.Config;
+import org.embulk.util.config.ConfigDefault;
+import org.embulk.util.config.ConfigMapper;
+import org.embulk.util.config.ConfigMapperFactory;
+import org.embulk.util.config.Task;
+import org.embulk.util.config.TaskMapper;
 import org.embulk.spi.Exec;
 import org.embulk.spi.InputPlugin;
 import org.embulk.spi.PageBuilder;
@@ -46,6 +48,11 @@ import org.embulk.input.cloudwatch_logs.utils.DateUtils;
 public abstract class AbstractCloudwatchLogsInputPlugin
         implements InputPlugin
 {
+    static final ConfigMapperFactory CONFIG_MAPPER_FACTORY =
+            ConfigMapperFactory.builder().addDefaultModules().build();
+    private static final ConfigMapper CONFIG_MAPPER = CONFIG_MAPPER_FACTORY.createConfigMapper();
+    private static final TaskMapper TASK_MAPPER = CONFIG_MAPPER_FACTORY.createTaskMapper();
+
     private static final String DEFAULT_DATE_FORMAT = "yyyy-MM-dd HH:mm:ss";
 
     public interface PluginTask
@@ -85,7 +92,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
     public ConfigDiff transaction(ConfigSource config,
             InputPlugin.Control control)
     {
-        PluginTask task = config.loadConfig(getTaskClass());
+        PluginTask task = CONFIG_MAPPER.map(config, getTaskClass());
 
         Schema schema = new Schema.Builder()
                 .add("timestamp", Types.TIMESTAMP)
@@ -133,7 +140,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
             Schema schema, int taskIndex,
             PageOutput output)
     {
-        PluginTask task = taskSource.loadTask(getTaskClass());
+        PluginTask task = TASK_MAPPER.map(taskSource, getTaskClass());
 
         AWSLogs client = newLogsClient(task);
         CloudWatchLogsDrainer drainer = new CloudWatchLogsDrainer(task, client);

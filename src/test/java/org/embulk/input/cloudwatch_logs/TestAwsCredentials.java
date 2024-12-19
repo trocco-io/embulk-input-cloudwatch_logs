@@ -31,6 +31,7 @@ import org.embulk.input.cloudwatch_logs.TestHelpers.CloudWatchLogsTestUtils;
 import static org.embulk.input.cloudwatch_logs.CloudwatchLogsInputPlugin.CloudWatchLogsPluginTask;
 import static org.junit.Assume.assumeNotNull;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -44,6 +45,7 @@ public class TestAwsCredentials
             .registerPlugin(InputPlugin.class, "cloudwatch_logs", CloudwatchLogsInputPlugin.class)
             .build();
 
+    private final org.embulk.util.config.ConfigMapper configMapper = CloudwatchLogsInputPlugin.CONFIG_MAPPER_FACTORY.createConfigMapper();
     private CloudwatchLogsInputPlugin plugin;
 
     private ConfigSource config;
@@ -81,7 +83,7 @@ public class TestAwsCredentials
         logStreamName = TestHelpers.getLogStreamName();
 
         if (plugin == null) {
-            plugin = Mockito.spy(new CloudwatchLogsInputPlugin());
+            plugin = spy(new CloudwatchLogsInputPlugin());
             config = runtime.getExec().newConfigSource()
                     .set("type", "cloudwatch_logs")
                     .set("log_group_name", logGroupName)
@@ -102,8 +104,8 @@ public class TestAwsCredentials
 
     private void doTest(ConfigSource config) throws IOException
     {
-        CloudWatchLogsPluginTask task = config.loadConfig(CloudWatchLogsPluginTask.class);
-        CloudwatchLogsInputPlugin plugin = runtime.getInstance(CloudwatchLogsInputPlugin.class);
+        CloudWatchLogsPluginTask task = configMapper.map(config, CloudWatchLogsPluginTask.class);
+        CloudwatchLogsInputPlugin plugin = spy(new CloudwatchLogsInputPlugin());
         logsClient = plugin.newLogsClient(task);
         testUtils = new CloudWatchLogsTestUtils(logsClient, logGroupName, logStreamName);
 

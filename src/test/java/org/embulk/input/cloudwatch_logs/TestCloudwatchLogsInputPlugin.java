@@ -31,6 +31,7 @@ import org.embulk.input.cloudwatch_logs.TestHelpers.CloudWatchLogsTestUtils;
 import static org.embulk.input.cloudwatch_logs.CloudwatchLogsInputPlugin.CloudWatchLogsPluginTask;
 import static org.junit.Assume.assumeNotNull;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -93,7 +94,7 @@ public class TestCloudwatchLogsInputPlugin
         }
         doReturn(pageBuilder).when(plugin).getPageBuilder(Mockito.any(), Mockito.any());
         CloudWatchLogsPluginTask task = config.loadConfig(CloudWatchLogsPluginTask.class);
-        CloudwatchLogsInputPlugin plugin = runtime.getInstance(CloudwatchLogsInputPlugin.class);
+        CloudwatchLogsInputPlugin plugin = spy(new CloudwatchLogsInputPlugin());
         logsClient = plugin.newLogsClient(task);
         testUtils = new CloudWatchLogsTestUtils(logsClient, logGroupName, logStreamName);
     }
@@ -135,7 +136,7 @@ public class TestCloudwatchLogsInputPlugin
                 .set("region", "ap-southeast-2")
                 .remove("endpoint")
                 .loadConfig(CloudWatchLogsPluginTask.class);
-        CloudwatchLogsInputPlugin plugin = runtime.getInstance(CloudwatchLogsInputPlugin.class);
+        CloudwatchLogsInputPlugin plugin = spy(new CloudwatchLogsInputPlugin());
         AWSLogs logsClient = plugin.newLogsClient(task);
 
         // Should not be null
