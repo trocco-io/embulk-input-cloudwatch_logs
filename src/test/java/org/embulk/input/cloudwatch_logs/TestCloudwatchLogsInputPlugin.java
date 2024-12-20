@@ -12,6 +12,8 @@ import org.embulk.spi.PageBuilder;
 import org.embulk.spi.Schema;
 import org.embulk.spi.TestPageBuilderReader.MockPageOutput;
 import org.embulk.test.TestingEmbulk;
+import org.embulk.util.config.ConfigMapper;
+import org.embulk.util.config.ConfigMapperFactory;
 
 import org.junit.After;
 import org.junit.Before;
@@ -37,6 +39,10 @@ import static org.mockito.Mockito.verify;
 
 public class TestCloudwatchLogsInputPlugin
 {
+    private static final ConfigMapperFactory CONFIG_MAPPER_FACTORY =
+            ConfigMapperFactory.builder().addDefaultModules().build();
+    private static final ConfigMapper CONFIG_MAPPER = CONFIG_MAPPER_FACTORY.createConfigMapper();
+
     @Rule
     public EmbulkTestRuntime runtime = new EmbulkTestRuntime();
 
@@ -93,7 +99,7 @@ public class TestCloudwatchLogsInputPlugin
             pageBuilder = Mockito.mock(PageBuilder.class);
         }
         doReturn(pageBuilder).when(plugin).getPageBuilder(Mockito.any(), Mockito.any());
-        CloudWatchLogsPluginTask task = config.loadConfig(CloudWatchLogsPluginTask.class);
+        CloudWatchLogsPluginTask task = CONFIG_MAPPER.map(config, CloudWatchLogsPluginTask.class);
         CloudwatchLogsInputPlugin plugin = spy(new CloudwatchLogsInputPlugin());
         logsClient = plugin.newLogsClient(task);
         testUtils = new CloudWatchLogsTestUtils(logsClient, logGroupName, logStreamName);
