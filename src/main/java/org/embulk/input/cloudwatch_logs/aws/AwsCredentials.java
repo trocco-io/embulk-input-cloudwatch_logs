@@ -25,7 +25,6 @@ public abstract class AwsCredentials
 
     public static AWSCredentialsProvider getAWSCredentialsProvider(AwsCredentialsConfig task)
     {
-        String authenticationMethodOption = "authentication_method";
         String awsSessionTokenOption = "aws_session_token";
         String awsAccessKeyIdOption = "aws_access_key_id";
         String awsSecretAccessKeyOption = "aws_secret_access_key";
@@ -66,7 +65,7 @@ public abstract class AwsCredentials
             invalid(task.getAwsProfileFile(), awsProfileFileOption);
             invalid(task.getAwsProfileName(), awsProfileNameOption);
 
-            return new InstanceProfileCredentialsProvider();
+            return InstanceProfileCredentialsProvider.getInstance();
 
         case "profile":
             {

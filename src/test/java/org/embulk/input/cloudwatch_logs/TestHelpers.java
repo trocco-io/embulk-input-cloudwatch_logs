@@ -1,12 +1,5 @@
 package org.embulk.input.cloudwatch_logs;
 
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
-import java.util.Date;
-import java.util.List;
-import java.util.UUID;
-
 import com.amazonaws.services.logs.AWSLogs;
 import com.amazonaws.services.logs.model.CreateLogGroupRequest;
 import com.amazonaws.services.logs.model.CreateLogStreamRequest;
@@ -14,9 +7,16 @@ import com.amazonaws.services.logs.model.DeleteLogGroupRequest;
 import com.amazonaws.services.logs.model.InputLogEvent;
 import com.amazonaws.services.logs.model.PutLogEventsRequest;
 import com.amazonaws.services.logs.model.ResourceNotFoundException;
+import org.embulk.util.config.ConfigMapperFactory;
+
+import java.util.Date;
+import java.util.List;
+import java.util.UUID;
 
 public final class TestHelpers
 {
+    public static final ConfigMapperFactory CONFIG_MAPPER_FACTORY = ConfigMapperFactory.builder().addDefaultModules().build();
+
     private TestHelpers() {}
 
     public static String getLogGroupName()
@@ -50,7 +50,8 @@ public final class TestHelpers
             request.setLogGroupName(logGroupName);
             try {
                 logs.deleteLogGroup(request);
-            } catch (ResourceNotFoundException ex) {
+            }
+            catch (ResourceNotFoundException ex) {
                 // Just ignored.
             }
         }
@@ -67,7 +68,8 @@ public final class TestHelpers
             logs.createLogStream(streamRequest);
         }
 
-        public void putLogEvents(List<InputLogEvent> events) {
+        public void putLogEvents(List<InputLogEvent> events)
+        {
             PutLogEventsRequest request = new PutLogEventsRequest()
                     .withLogGroupName(logGroupName)
                     .withLogStreamName(logStreamName)

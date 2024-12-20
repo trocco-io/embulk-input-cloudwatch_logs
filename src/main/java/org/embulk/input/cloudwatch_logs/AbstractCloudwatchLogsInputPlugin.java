@@ -1,35 +1,9 @@
 package org.embulk.input.cloudwatch_logs;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Optional;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
-
-import org.embulk.config.Config;
-import org.embulk.config.ConfigDefault;
-
-import org.embulk.config.ConfigDiff;
-import org.embulk.config.ConfigException;
-import org.embulk.config.ConfigSource;
-import org.embulk.config.Task;
-import org.embulk.config.TaskReport;
-import org.embulk.config.TaskSource;
-import org.embulk.spi.Exec;
-import org.embulk.spi.InputPlugin;
-import org.embulk.spi.PageBuilder;
-import org.embulk.spi.PageOutput;
-import org.embulk.spi.Schema;
-import org.embulk.spi.time.Timestamp;
-import org.embulk.spi.type.Types;
-
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.retry.PredefinedRetryPolicies;
-
 import com.amazonaws.services.logs.AWSLogs;
 import com.amazonaws.services.logs.AWSLogsClientBuilder;
 import com.amazonaws.services.logs.model.DescribeLogStreamsRequest;
@@ -38,14 +12,38 @@ import com.amazonaws.services.logs.model.GetLogEventsRequest;
 import com.amazonaws.services.logs.model.GetLogEventsResult;
 import com.amazonaws.services.logs.model.LogStream;
 import com.amazonaws.services.logs.model.OutputLogEvent;
-
+import com.google.common.annotations.VisibleForTesting;
+import org.embulk.config.ConfigDiff;
+import org.embulk.config.ConfigException;
+import org.embulk.config.ConfigSource;
+import org.embulk.config.TaskReport;
+import org.embulk.config.TaskSource;
 import org.embulk.input.cloudwatch_logs.aws.AwsCredentials;
 import org.embulk.input.cloudwatch_logs.aws.AwsCredentialsTask;
 import org.embulk.input.cloudwatch_logs.utils.DateUtils;
+import org.embulk.spi.Exec;
+import org.embulk.spi.InputPlugin;
+import org.embulk.spi.PageBuilder;
+import org.embulk.spi.PageOutput;
+import org.embulk.spi.Schema;
+import org.embulk.spi.type.Types;
+import org.embulk.util.config.Config;
+import org.embulk.util.config.ConfigDefault;
+import org.embulk.util.config.ConfigMapper;
+import org.embulk.util.config.ConfigMapperFactory;
+import org.embulk.util.config.Task;
+import org.embulk.util.config.TaskMapper;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+import java.util.Optional;
 
 public abstract class AbstractCloudwatchLogsInputPlugin
         implements InputPlugin
 {
+    private static final ConfigMapperFactory CONFIG_MAPPER_FACTORY = ConfigMapperFactory.builder().addDefaultModules().build();
     private static final String DEFAULT_DATE_FORMAT = "yyyy-MM-dd HH:mm:ss";
 
     public interface PluginTask
@@ -85,22 +83,23 @@ public abstract class AbstractCloudwatchLogsInputPlugin
     public ConfigDiff transaction(ConfigSource config,
             InputPlugin.Control control)
     {
-        PluginTask task = config.loadConfig(getTaskClass());
+        ConfigMapper configMapper = CONFIG_MAPPER_FACTORY.createConfigMapper();
+        PluginTask task = configMapper.map(config, getTaskClass());
 
         Schema schema = new Schema.Builder()
                 .add("timestamp", Types.TIMESTAMP)
                 .add(task.getColumnName(), Types.STRING)
                 .build();
         int taskCount = 1;  // number of run() method calls
-        String time_range_format = DEFAULT_DATE_FORMAT;
+        String timeRangeFormat = DEFAULT_DATE_FORMAT;
         if (task.getTimeRangeFormat().isPresent()) {
-            time_range_format = task.getTimeRangeFormat().get();
+            timeRangeFormat = task.getTimeRangeFormat().get();
         }
         if (task.getStartTime().isPresent() && task.getEndTime().isPresent()) {
             Date startTime = DateUtils.parseDateStr(task.getStartTime().get(),
-                                                    Collections.singletonList(time_range_format));
+                                                    Collections.singletonList(timeRangeFormat));
             Date endTime = DateUtils.parseDateStr(task.getEndTime().get(),
-                                                  Collections.singletonList(time_range_format));
+                                                  Collections.singletonList(timeRangeFormat));
             if (endTime.before(startTime)) {
                 throw new ConfigException(String.format("endTime(%s) must not be earlier than startTime(%s).",
                                                         task.getEndTime().get(),
@@ -108,7 +107,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
             }
         }
 
-        return resume(task.dump(), schema, taskCount, control);
+        return resume(task.toTaskSource(), schema, taskCount, control);
     }
 
     @Override
@@ -117,7 +116,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
             InputPlugin.Control control)
     {
         control.run(taskSource, schema, taskCount);
-        return Exec.newConfigDiff();
+        return CONFIG_MAPPER_FACTORY.newConfigDiff();
     }
 
     @Override
@@ -133,12 +132,13 @@ public abstract class AbstractCloudwatchLogsInputPlugin
             Schema schema, int taskIndex,
             PageOutput output)
     {
-        PluginTask task = taskSource.loadTask(getTaskClass());
+        TaskMapper taskMapper = CONFIG_MAPPER_FACTORY.createTaskMapper();
+        PluginTask task = taskMapper.map(taskSource, getTaskClass());
 
         AWSLogs client = newLogsClient(task);
         CloudWatchLogsDrainer drainer = new CloudWatchLogsDrainer(task, client);
         if (task.getUseLogStreamNamePrefix()) {
-            List<LogStream> defaultLogStream = new ArrayList<LogStream>();
+            List<LogStream> defaultLogStream = new ArrayList<>();
             List<LogStream> logStreams = drainer.describeLogStreams(defaultLogStream, null);
             try (final PageBuilder pageBuilder = getPageBuilder(schema, output)) {
                 for (LogStream stream : logStreams) {
@@ -161,9 +161,10 @@ public abstract class AbstractCloudwatchLogsInputPlugin
             }
         }
 
-        return Exec.newTaskReport();
+        return CONFIG_MAPPER_FACTORY.newTaskReport();
     }
 
+    @SuppressWarnings("deprecation") // TODO: For compatibility with Embulk v0.9
     private void addRecords(CloudWatchLogsDrainer drainer, PageBuilder pageBuilder, String logStreamName)
     {
         String nextToken = null;
@@ -171,7 +172,8 @@ public abstract class AbstractCloudwatchLogsInputPlugin
             GetLogEventsResult result = drainer.getEvents(logStreamName, nextToken);
             List<OutputLogEvent> events = result.getEvents();
             for (OutputLogEvent event : events) {
-                pageBuilder.setTimestamp(0, Timestamp.ofEpochMilli(event.getTimestamp()));
+                // TODO: Use Instant instead of Timestamp
+                pageBuilder.setTimestamp(0, org.embulk.spi.time.Timestamp.ofEpochMilli(event.getTimestamp()));
                 pageBuilder.setString(1, event.getMessage());
 
                 pageBuilder.addRecord();
@@ -231,13 +233,14 @@ public abstract class AbstractCloudwatchLogsInputPlugin
     @Override
     public ConfigDiff guess(ConfigSource config)
     {
-        return Exec.newConfigDiff();
+        return CONFIG_MAPPER_FACTORY.newConfigDiff();
     }
 
     @VisibleForTesting
+    @SuppressWarnings("deprecation") // TODO: For compatibility with Embulk v0.9
     public PageBuilder getPageBuilder(final Schema schema, final PageOutput output)
     {
-        return new PageBuilder(Exec.getBufferAllocator(), schema, output);
+        return new PageBuilder(Exec.getBufferAllocator(), schema, output); // TODO: Use Exec#getPageBuilder
     }
 
     @VisibleForTesting
@@ -260,18 +263,18 @@ public abstract class AbstractCloudwatchLogsInputPlugin
                         .withLogGroupName(logGroupName)
                         .withLogStreamName(logStreamName)
                         .withStartFromHead(true);
-                String time_range_format = DEFAULT_DATE_FORMAT;
+                String timeRangeFormat = DEFAULT_DATE_FORMAT;
                 if (task.getTimeRangeFormat().isPresent()) {
-                    time_range_format = task.getTimeRangeFormat().get();
+                    timeRangeFormat = task.getTimeRangeFormat().get();
                 }
                 if (task.getStartTime().isPresent()) {
                     String startTimeStr = task.getStartTime().get();
-                    Date startTime = DateUtils.parseDateStr(startTimeStr, Collections.singletonList(time_range_format));
+                    Date startTime = DateUtils.parseDateStr(startTimeStr, Collections.singletonList(timeRangeFormat));
                     request.setStartTime(startTime.getTime());
                 }
                 if (task.getEndTime().isPresent()) {
                     String endTimeStr = task.getEndTime().get();
-                    Date endTime = DateUtils.parseDateStr(endTimeStr, Collections.singletonList(time_range_format));
+                    Date endTime = DateUtils.parseDateStr(endTimeStr, Collections.singletonList(timeRangeFormat));
                     request.setEndTime(endTime.getTime());
                 }
                 if (nextToken != null) {
@@ -309,9 +312,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
 
                 DescribeLogStreamsResult response = client.describeLogStreams(request);
                 if (!logStreams.isEmpty()) {
-                    for (LogStream stream : response.getLogStreams()) {
-                        logStreams.add(stream);
-                    }
+                    logStreams.addAll(response.getLogStreams());
                 }
                 else {
                     logStreams = response.getLogStreams();
