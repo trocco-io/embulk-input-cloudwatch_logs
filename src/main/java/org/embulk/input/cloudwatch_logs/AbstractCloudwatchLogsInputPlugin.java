@@ -225,6 +225,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
 //        clientConfig.setMaxErrorRetry(3); // SDK default: 3
         clientConfig.setSocketTimeout(8 * 60 * 1000); // SDK default: 50*1000
         clientConfig.setRetryPolicy(PredefinedRetryPolicies.NO_RETRY_POLICY);
+        clientConfig.setConnectionTTL(30 * 1000); // default: -1
         // TODO: implement http proxy
 
         return clientConfig;
