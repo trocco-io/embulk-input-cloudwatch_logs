@@ -71,6 +71,8 @@
     1. "profile"
     1. "instance"
 
+- **stop_when_file_not_found**: if true, check existence of files (boolean, default false)
+
 ## Example
 
 ```yaml

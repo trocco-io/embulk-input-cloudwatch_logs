@@ -1,18 +1,11 @@
 package org.embulk.input.cloudwatch_logs;
 
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.ClientConfiguration;
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.retry.PredefinedRetryPolicies;
-import com.amazonaws.services.logs.AWSLogs;
-import com.amazonaws.services.logs.AWSLogsClientBuilder;
-import com.amazonaws.services.logs.model.DescribeLogStreamsRequest;
-import com.amazonaws.services.logs.model.DescribeLogStreamsResult;
-import com.amazonaws.services.logs.model.GetLogEventsRequest;
-import com.amazonaws.services.logs.model.GetLogEventsResult;
-import com.amazonaws.services.logs.model.LogStream;
-import com.amazonaws.services.logs.model.OutputLogEvent;
-import com.google.common.annotations.VisibleForTesting;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+import java.util.Optional;
+
 import org.embulk.config.ConfigDiff;
 import org.embulk.config.ConfigException;
 import org.embulk.config.ConfigSource;
@@ -34,11 +27,19 @@ import org.embulk.util.config.ConfigMapperFactory;
 import org.embulk.util.config.Task;
 import org.embulk.util.config.TaskMapper;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
-import java.util.Optional;
+import com.amazonaws.AmazonServiceException;
+import com.amazonaws.ClientConfiguration;
+import com.amazonaws.auth.AWSCredentialsProvider;
+import com.amazonaws.retry.PredefinedRetryPolicies;
+import com.amazonaws.services.logs.AWSLogs;
+import com.amazonaws.services.logs.AWSLogsClientBuilder;
+import com.amazonaws.services.logs.model.DescribeLogStreamsRequest;
+import com.amazonaws.services.logs.model.DescribeLogStreamsResult;
+import com.amazonaws.services.logs.model.GetLogEventsRequest;
+import com.amazonaws.services.logs.model.GetLogEventsResult;
+import com.amazonaws.services.logs.model.LogStream;
+import com.amazonaws.services.logs.model.OutputLogEvent;
+import com.google.common.annotations.VisibleForTesting;
 
 public abstract class AbstractCloudwatchLogsInputPlugin
         implements InputPlugin
@@ -75,6 +76,10 @@ public abstract class AbstractCloudwatchLogsInputPlugin
         @Config("column_name")
         @ConfigDefault("\"message\"")
         public String getColumnName();
+
+        @Config("stop_when_file_not_found")
+        @ConfigDefault("false")
+        boolean getStopWhenFileNotFound();
     }
 
     protected abstract Class<? extends PluginTask> getTaskClass();
@@ -137,13 +142,14 @@ public abstract class AbstractCloudwatchLogsInputPlugin
 
         AWSLogs client = newLogsClient(task);
         CloudWatchLogsDrainer drainer = new CloudWatchLogsDrainer(task, client);
+        int totalRecords = 0;
         if (task.getUseLogStreamNamePrefix()) {
             List<LogStream> defaultLogStream = new ArrayList<>();
             List<LogStream> logStreams = drainer.describeLogStreams(defaultLogStream, null);
             try (final PageBuilder pageBuilder = getPageBuilder(schema, output)) {
                 for (LogStream stream : logStreams) {
                     String logStreamName = stream.getLogStreamName();
-                    addRecords(drainer, pageBuilder, logStreamName);
+                    totalRecords += addRecords(drainer, pageBuilder, logStreamName);
                 }
 
                 pageBuilder.finish();
@@ -155,19 +161,24 @@ public abstract class AbstractCloudwatchLogsInputPlugin
                 if (task.getLogStreamName().isPresent()) {
                     logStreamName = task.getLogStreamName().get();
                 }
-                addRecords(drainer, pageBuilder, logStreamName);
+                totalRecords += addRecords(drainer, pageBuilder, logStreamName);
 
                 pageBuilder.finish();
             }
+        }
+
+        if (totalRecords == 0 && task.getStopWhenFileNotFound()) {
+            throw new ConfigException("\"stop_when_file_not_found\" is true, but no log records were found.");
         }
 
         return CONFIG_MAPPER_FACTORY.newTaskReport();
     }
 
     @SuppressWarnings("deprecation") // TODO: For compatibility with Embulk v0.9
-    private void addRecords(CloudWatchLogsDrainer drainer, PageBuilder pageBuilder, String logStreamName)
+    private int addRecords(CloudWatchLogsDrainer drainer, PageBuilder pageBuilder, String logStreamName)
     {
         String nextToken = null;
+        int recordCount = 0;
         while (true) {
             GetLogEventsResult result = drainer.getEvents(logStreamName, nextToken);
             List<OutputLogEvent> events = result.getEvents();
@@ -177,6 +188,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
                 pageBuilder.setString(1, event.getMessage());
 
                 pageBuilder.addRecord();
+                recordCount++;
             }
             String nextForwardToken = result.getNextForwardToken();
             if (nextForwardToken == null || nextForwardToken.equals(nextToken)) {
@@ -184,6 +196,8 @@ public abstract class AbstractCloudwatchLogsInputPlugin
             }
             nextToken = nextForwardToken;
         }
+
+        return recordCount;
     }
 
     /**
