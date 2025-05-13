@@ -168,7 +168,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
         }
 
         if (totalRecords == 0 && task.getStopWhenFileNotFound()) {
-            throw new ConfigException("\"stop_when_file_not_found\" is true, but no log records were found.");
+            throw new ConfigException("No log record is found. \"stop_when_file_not_found\" option is \"true\".");
         }
 
         return CONFIG_MAPPER_FACTORY.newTaskReport();
