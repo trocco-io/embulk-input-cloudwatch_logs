@@ -236,10 +236,15 @@ public abstract class AbstractCloudwatchLogsInputPlugin
 
         //clientConfig.setProtocol(Protocol.HTTP);
         clientConfig.setMaxConnections(50); // SDK default: 50
-//        clientConfig.setMaxErrorRetry(3); // SDK default: 3
-        clientConfig.setSocketTimeout(8 * 60 * 1000); // SDK default: 50*1000
-        clientConfig.setRetryPolicy(PredefinedRetryPolicies.NO_RETRY_POLICY);
-        clientConfig.setConnectionTTL(30 * 1000); // default: -1
+        clientConfig.setMaxErrorRetry(5); // Increased from default 3 to handle connection issues
+        clientConfig.setSocketTimeout(10 * 60 * 1000); // Increased from 8 minutes to 10 minutes
+        clientConfig.setConnectionTimeout(60 * 1000); // Set connection timeout to 60 seconds
+        clientConfig.setRequestTimeout(15 * 60 * 1000); // Set request timeout to 15 minutes
+        // Use default retry policy with exponential backoff instead of NO_RETRY_POLICY
+        clientConfig.setRetryPolicy(PredefinedRetryPolicies.getDefaultRetryPolicy());
+        clientConfig.setConnectionTTL(60 * 1000); // Increased from 30 seconds to 60 seconds
+        // Enable TCP keep alive to maintain connections
+        clientConfig.setUseTcpKeepAlive(true);
         // TODO: implement http proxy
 
         return clientConfig;
