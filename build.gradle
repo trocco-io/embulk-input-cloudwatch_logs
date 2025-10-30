@@ -35,8 +35,11 @@ dependencies {
 
     implementation "org.embulk:embulk-util-config:0.3.4"
     implementation "com.google.guava:guava:28.2-jre"
-    implementation "com.amazonaws:aws-java-sdk-logs:1.11.1034"
-    implementation "com.amazonaws:aws-java-sdk-sts:1.11.1034"
+    implementation platform("software.amazon.awssdk:bom:2.20.26")
+    implementation "software.amazon.awssdk:cloudwatchlogs"
+    implementation "software.amazon.awssdk:sts"
+    implementation "software.amazon.awssdk:apache-client"
+    implementation "joda-time:joda-time:2.12.7"
 
     testImplementation "junit:junit:4.+"
     testImplementation "org.mockito:mockito-core:1.+"

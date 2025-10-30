@@ -1,20 +1,19 @@
 package org.embulk.input.cloudwatch_logs.aws;
 
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.auth.AWSSessionCredentials;
-import com.amazonaws.auth.AWSSessionCredentialsProvider;
-import com.amazonaws.auth.AnonymousAWSCredentials;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.auth.BasicSessionCredentials;
-import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
-import com.amazonaws.auth.EnvironmentVariableCredentialsProvider;
-import com.amazonaws.auth.InstanceProfileCredentialsProvider;
-import com.amazonaws.auth.SystemPropertiesCredentialsProvider;
-import com.amazonaws.auth.profile.ProfileCredentialsProvider;
-import com.amazonaws.auth.profile.ProfilesConfigFile;
 import org.embulk.config.ConfigException;
+import software.amazon.awssdk.auth.credentials.AnonymousCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.InstanceProfileCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.SystemPropertyCredentialsProvider;
+import software.amazon.awssdk.profiles.ProfileFile;
 
+import java.nio.file.Paths;
 import java.util.Optional;
 
 public abstract class AwsCredentials
@@ -23,7 +22,7 @@ public abstract class AwsCredentials
     {
     }
 
-    public static AWSCredentialsProvider getAWSCredentialsProvider(AwsCredentialsConfig task)
+    public static AwsCredentialsProvider getAWSCredentialsProvider(AwsCredentialsConfig task)
     {
         String awsSessionTokenOption = "aws_session_token";
         String awsAccessKeyIdOption = "aws_access_key_id";
@@ -38,17 +37,9 @@ public abstract class AwsCredentials
             invalid(task.getAwsProfileFile(), awsProfileFileOption);
             invalid(task.getAwsProfileName(), awsProfileNameOption);
 
-            final BasicAWSCredentials creds = new BasicAWSCredentials(accessKeyId, secretAccessKey);
-                return new AWSCredentialsProvider() {
-                    public AWSCredentials getCredentials()
-                    {
-                        return creds;
-                    }
-
-                    public void refresh()
-                    {
-                    }
-                };
+            return StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(accessKeyId, secretAccessKey)
+            );
         }
 
         case "env":
@@ -57,7 +48,7 @@ public abstract class AwsCredentials
             invalid(task.getAwsProfileFile(), awsProfileFileOption);
             invalid(task.getAwsProfileName(), awsProfileNameOption);
 
-            return overwriteAwsCredentials(task, new EnvironmentVariableCredentialsProvider().getCredentials());
+            return overwriteAwsCredentials(task, EnvironmentVariableCredentialsProvider.create());
 
         case "instance":
             invalid(task.getAwsAccessKeyId(), awsAccessKeyIdOption);
@@ -65,7 +56,7 @@ public abstract class AwsCredentials
             invalid(task.getAwsProfileFile(), awsProfileFileOption);
             invalid(task.getAwsProfileName(), awsProfileNameOption);
 
-            return InstanceProfileCredentialsProvider.getInstance();
+            return InstanceProfileCredentialsProvider.create();
 
         case "profile":
             {
@@ -73,16 +64,18 @@ public abstract class AwsCredentials
                 invalid(task.getAwsSecretAccessKey(), awsSecretAccessKeyOption);
 
                 String profileName = task.getAwsProfileName().orElse("default");
-                ProfileCredentialsProvider provider;
+                ProfileCredentialsProvider.Builder builder = ProfileCredentialsProvider.builder()
+                    .profileName(profileName);
+
                 if (task.getAwsProfileFile().isPresent()) {
-                    ProfilesConfigFile file = new ProfilesConfigFile(task.getAwsProfileFile().get().getFile());
-                    provider = new ProfileCredentialsProvider(file, profileName);
-                }
-                else {
-                    provider = new ProfileCredentialsProvider(profileName);
+                    ProfileFile profileFile = ProfileFile.builder()
+                        .content(Paths.get(task.getAwsProfileFile().get().getPath().toString()))
+                        .type(ProfileFile.Type.CREDENTIALS)
+                        .build();
+                    builder.profileFile(profileFile);
                 }
 
-                return overwriteAwsCredentials(task, provider.getCredentials());
+                return overwriteAwsCredentials(task, builder.build());
             }
 
         case "properties":
@@ -91,23 +84,15 @@ public abstract class AwsCredentials
             invalid(task.getAwsProfileFile(), awsProfileFileOption);
             invalid(task.getAwsProfileName(), awsProfileNameOption);
 
-            return overwriteAwsCredentials(task, new SystemPropertiesCredentialsProvider().getCredentials());
+            return overwriteAwsCredentials(task, SystemPropertyCredentialsProvider.create());
 
         case "anonymous":
             invalid(task.getAwsAccessKeyId(), awsAccessKeyIdOption);
             invalid(task.getAwsSecretAccessKey(), awsSecretAccessKeyOption);
             invalid(task.getAwsProfileFile(), awsProfileFileOption);
             invalid(task.getAwsProfileName(), awsProfileNameOption);
-            return new AWSCredentialsProvider() {
-                public AWSCredentials getCredentials()
-                {
-                    return new AnonymousAWSCredentials();
-                }
 
-                public void refresh()
-                {
-                }
-            };
+            return AnonymousCredentialsProvider.create();
 
         case "session":
             {
@@ -118,17 +103,10 @@ public abstract class AwsCredentials
                                                "'" + awsSessionTokenOption + "'");
                 invalid(task.getAwsProfileFile(), awsProfileFileOption);
                 invalid(task.getAwsProfileName(), awsProfileNameOption);
-                final AWSSessionCredentials creds = new BasicSessionCredentials(accessKeyId, secretAccessKey, sessionToken);
-                return new AWSSessionCredentialsProvider() {
-                    public AWSSessionCredentials getCredentials()
-                    {
-                        return creds;
-                    }
 
-                    public void refresh()
-                    {
-                    }
-                };
+                return StaticCredentialsProvider.create(
+                    AwsSessionCredentials.create(accessKeyId, secretAccessKey, sessionToken)
+                );
             }
 
         case "default":
@@ -138,7 +116,7 @@ public abstract class AwsCredentials
                 invalid(task.getAwsProfileFile(), awsProfileFileOption);
                 invalid(task.getAwsProfileName(), awsProfileNameOption);
 
-                return new DefaultAWSCredentialsProviderChain();
+                return DefaultCredentialsProvider.create();
             }
 
         default:
@@ -147,18 +125,20 @@ public abstract class AwsCredentials
         }
     }
 
-    private static AWSCredentialsProvider overwriteAwsCredentials(AwsCredentialsConfig task, final AWSCredentials creds)
+    private static AwsCredentialsProvider overwriteAwsCredentials(AwsCredentialsConfig task, final AwsCredentialsProvider provider)
     {
-        return new AWSCredentialsProvider() {
-            public AWSCredentials getCredentials()
-            {
-                return creds;
-            }
-
-            public void refresh()
-            {
-            }
-        };
+        // If session token is provided, wrap with session credentials
+        if (task.getAwsSessionToken().isPresent()) {
+            software.amazon.awssdk.auth.credentials.AwsCredentials creds = provider.resolveCredentials();
+            return StaticCredentialsProvider.create(
+                AwsSessionCredentials.create(
+                    creds.accessKeyId(),
+                    creds.secretAccessKey(),
+                    task.getAwsSessionToken().get()
+                )
+            );
+        }
+        return provider;
     }
 
     private static <T> T required(Optional<T> value, String message)
