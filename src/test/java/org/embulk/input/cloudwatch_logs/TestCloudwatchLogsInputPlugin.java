@@ -1,7 +1,5 @@
 package org.embulk.input.cloudwatch_logs;
 
-import com.amazonaws.services.logs.AWSLogs;
-import com.amazonaws.services.logs.model.InputLogEvent;
 import org.embulk.config.ConfigSource;
 import org.embulk.config.TaskReport;
 import org.embulk.config.TaskSource;
@@ -19,6 +17,8 @@ import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.mockito.Mockito;
+import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
+import software.amazon.awssdk.services.cloudwatchlogs.model.InputLogEvent;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -89,7 +89,7 @@ public class TestCloudwatchLogsInputPlugin
         ConfigMapper configMapper = CONFIG_MAPPER_FACTORY.createConfigMapper();
         CloudWatchLogsPluginTask task = configMapper.map(config, CloudWatchLogsPluginTask.class);
         CloudwatchLogsInputPlugin plugin = new CloudwatchLogsInputPlugin();
-        AWSLogs logsClient = plugin.newLogsClient(task);
+        CloudWatchLogsClient logsClient = plugin.newLogsClient(task);
         testUtils = new CloudWatchLogsTestUtils(logsClient, logGroupName, logStreamName);
     }
 
@@ -107,9 +107,10 @@ public class TestCloudwatchLogsInputPlugin
         List<InputLogEvent> events = new ArrayList<>();
         Date d = new Date();
         for (int i = 0; i < 3; i++) {
-            InputLogEvent event = new InputLogEvent();
-            event.setTimestamp(d.getTime());
-            event.setMessage(String.format("CloudWatchLogs from Embulk take %d", i));
+            InputLogEvent event = InputLogEvent.builder()
+                    .timestamp(d.getTime())
+                    .message(String.format("CloudWatchLogs from Embulk take %d", i))
+                    .build();
             events.add(event);
         }
         testUtils.putLogEvents(events);
@@ -133,7 +134,7 @@ public class TestCloudwatchLogsInputPlugin
                 .set("region", "ap-southeast-2")
                 .remove("endpoint"), CloudWatchLogsPluginTask.class);
         CloudwatchLogsInputPlugin plugin = new CloudwatchLogsInputPlugin();
-        AWSLogs logsClient = plugin.newLogsClient(task);
+        CloudWatchLogsClient logsClient = plugin.newLogsClient(task);
 
         // Should not be null
         assumeNotNull(logsClient);

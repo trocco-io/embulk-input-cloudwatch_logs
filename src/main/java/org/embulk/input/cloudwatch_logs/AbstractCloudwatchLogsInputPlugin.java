@@ -1,11 +1,6 @@
 package org.embulk.input.cloudwatch_logs;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
-import java.util.Optional;
-
+import com.google.common.annotations.VisibleForTesting;
 import org.embulk.config.ConfigDiff;
 import org.embulk.config.ConfigException;
 import org.embulk.config.ConfigSource;
@@ -26,20 +21,29 @@ import org.embulk.util.config.ConfigMapper;
 import org.embulk.util.config.ConfigMapperFactory;
 import org.embulk.util.config.Task;
 import org.embulk.util.config.TaskMapper;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.core.retry.RetryPolicy;
+import software.amazon.awssdk.core.retry.backoff.BackoffStrategy;
+import software.amazon.awssdk.core.retry.backoff.EqualJitterBackoffStrategy;
+import software.amazon.awssdk.core.retry.conditions.RetryCondition;
+import software.amazon.awssdk.http.apache.ApacheHttpClient;
+import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
+import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClientBuilder;
+import software.amazon.awssdk.services.cloudwatchlogs.model.CloudWatchLogsException;
+import software.amazon.awssdk.services.cloudwatchlogs.model.DescribeLogStreamsRequest;
+import software.amazon.awssdk.services.cloudwatchlogs.model.DescribeLogStreamsResponse;
+import software.amazon.awssdk.services.cloudwatchlogs.model.GetLogEventsRequest;
+import software.amazon.awssdk.services.cloudwatchlogs.model.GetLogEventsResponse;
+import software.amazon.awssdk.services.cloudwatchlogs.model.LogStream;
+import software.amazon.awssdk.services.cloudwatchlogs.model.OutputLogEvent;
 
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.ClientConfiguration;
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.retry.PredefinedRetryPolicies;
-import com.amazonaws.services.logs.AWSLogs;
-import com.amazonaws.services.logs.AWSLogsClientBuilder;
-import com.amazonaws.services.logs.model.DescribeLogStreamsRequest;
-import com.amazonaws.services.logs.model.DescribeLogStreamsResult;
-import com.amazonaws.services.logs.model.GetLogEventsRequest;
-import com.amazonaws.services.logs.model.GetLogEventsResult;
-import com.amazonaws.services.logs.model.LogStream;
-import com.amazonaws.services.logs.model.OutputLogEvent;
-import com.google.common.annotations.VisibleForTesting;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+import java.util.Optional;
 
 public abstract class AbstractCloudwatchLogsInputPlugin
         implements InputPlugin
@@ -140,7 +144,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
         TaskMapper taskMapper = CONFIG_MAPPER_FACTORY.createTaskMapper();
         PluginTask task = taskMapper.map(taskSource, getTaskClass());
 
-        AWSLogs client = newLogsClient(task);
+        CloudWatchLogsClient client = newLogsClient(task);
         CloudWatchLogsDrainer drainer = new CloudWatchLogsDrainer(task, client);
         int totalRecords = 0;
         if (task.getUseLogStreamNamePrefix()) {
@@ -148,7 +152,7 @@ public abstract class AbstractCloudwatchLogsInputPlugin
             List<LogStream> logStreams = drainer.describeLogStreams(defaultLogStream, null);
             try (final PageBuilder pageBuilder = getPageBuilder(schema, output)) {
                 for (LogStream stream : logStreams) {
-                    String logStreamName = stream.getLogStreamName();
+                    String logStreamName = stream.logStreamName();
                     totalRecords += addRecords(drainer, pageBuilder, logStreamName);
                 }
 
@@ -180,17 +184,17 @@ public abstract class AbstractCloudwatchLogsInputPlugin
         String nextToken = null;
         int recordCount = 0;
         while (true) {
-            GetLogEventsResult result = drainer.getEvents(logStreamName, nextToken);
-            List<OutputLogEvent> events = result.getEvents();
+            GetLogEventsResponse result = drainer.getEvents(logStreamName, nextToken);
+            List<OutputLogEvent> events = result.events();
             for (OutputLogEvent event : events) {
                 // TODO: Use Instant instead of Timestamp
-                pageBuilder.setTimestamp(0, org.embulk.spi.time.Timestamp.ofEpochMilli(event.getTimestamp()));
-                pageBuilder.setString(1, event.getMessage());
+                pageBuilder.setTimestamp(0, org.embulk.spi.time.Timestamp.ofEpochMilli(event.timestamp()));
+                pageBuilder.setString(1, event.message());
 
                 pageBuilder.addRecord();
                 recordCount++;
             }
-            String nextForwardToken = result.getNextForwardToken();
+            String nextForwardToken = result.nextForwardToken();
             if (nextForwardToken == null || nextForwardToken.equals(nextToken)) {
                 break;
             }
@@ -205,9 +209,9 @@ public abstract class AbstractCloudwatchLogsInputPlugin
      * Since this returns an immutable object, it is not for any further customizations by mutating,
      * Subclass's customization should be done through {@link AbstractCloudwatchLogsInputPlugin#defaultLogsClientBuilder}.
      * @param task Embulk plugin task
-     * @return AWSLogs
+     * @return CloudWatchLogsClient
      */
-    protected AWSLogs newLogsClient(PluginTask task)
+    protected CloudWatchLogsClient newLogsClient(PluginTask task)
     {
         return defaultLogsClientBuilder(task).build();
     }
@@ -215,39 +219,49 @@ public abstract class AbstractCloudwatchLogsInputPlugin
     /**
      * A base builder for the subclasses to then customize.builder
      * @param task Embulk plugin
-     * @return AWSLogsClientBuilder
+     * @return CloudWatchLogsClientBuilder
      **/
-    protected AWSLogsClientBuilder defaultLogsClientBuilder(PluginTask task)
+    protected CloudWatchLogsClientBuilder defaultLogsClientBuilder(PluginTask task)
     {
-        return AWSLogsClientBuilder
-                .standard()
-                .withCredentials(getCredentialsProvider(task))
-                .withClientConfiguration(getClientConfiguration(task));
+        return CloudWatchLogsClient.builder()
+                .credentialsProvider(getCredentialsProvider(task))
+                .httpClientBuilder(getHttpClientBuilder())
+                .overrideConfiguration(getClientOverrideConfiguration());
     }
 
-    protected AWSCredentialsProvider getCredentialsProvider(PluginTask task)
+    protected AwsCredentialsProvider getCredentialsProvider(PluginTask task)
     {
         return AwsCredentials.getAWSCredentialsProvider(task);
     }
 
-    protected ClientConfiguration getClientConfiguration(PluginTask task)
+    protected ApacheHttpClient.Builder getHttpClientBuilder()
     {
-        ClientConfiguration clientConfig = new ClientConfiguration();
+        return ApacheHttpClient.builder()
+                .maxConnections(50)
+                .connectionTimeout(Duration.ofSeconds(60))
+                .socketTimeout(Duration.ofMinutes(10))
+                .connectionTimeToLive(Duration.ofSeconds(60))
+                .tcpKeepAlive(true);
+    }
 
-        //clientConfig.setProtocol(Protocol.HTTP);
-        clientConfig.setMaxConnections(50); // SDK default: 50
-        clientConfig.setMaxErrorRetry(5); // Increased from default 3 to handle connection issues
-        clientConfig.setSocketTimeout(10 * 60 * 1000); // Increased from 8 minutes to 10 minutes
-        clientConfig.setConnectionTimeout(60 * 1000); // Set connection timeout to 60 seconds
-        clientConfig.setRequestTimeout(15 * 60 * 1000); // Set request timeout to 15 minutes
-        // Use default retry policy with exponential backoff instead of NO_RETRY_POLICY
-        clientConfig.setRetryPolicy(PredefinedRetryPolicies.getDefaultRetryPolicy());
-        clientConfig.setConnectionTTL(60 * 1000); // Increased from 30 seconds to 60 seconds
-        // Enable TCP keep alive to maintain connections
-        clientConfig.setUseTcpKeepAlive(true);
-        // TODO: implement http proxy
+    protected ClientOverrideConfiguration getClientOverrideConfiguration()
+    {
+        BackoffStrategy backoffStrategy = EqualJitterBackoffStrategy.builder()
+                .baseDelay(Duration.ofMillis(100))
+                .maxBackoffTime(Duration.ofSeconds(20))
+                .build();
 
-        return clientConfig;
+        RetryPolicy retryPolicy = RetryPolicy.builder()
+                .numRetries(5)
+                .backoffStrategy(backoffStrategy)
+                .retryCondition(RetryCondition.defaultRetryCondition())
+                .build();
+
+        return ClientOverrideConfiguration.builder()
+                .apiCallTimeout(Duration.ofMinutes(15))
+                .apiCallAttemptTimeout(Duration.ofMinutes(10))
+                .retryPolicy(retryPolicy)
+                .build();
     }
 
     @Override
@@ -266,23 +280,24 @@ public abstract class AbstractCloudwatchLogsInputPlugin
     @VisibleForTesting
     static class CloudWatchLogsDrainer
     {
-        private final AWSLogs client;
+        private final CloudWatchLogsClient client;
         private final PluginTask task;
 
-        public CloudWatchLogsDrainer(PluginTask task, AWSLogs client)
+        public CloudWatchLogsDrainer(PluginTask task, CloudWatchLogsClient client)
         {
             this.client = client;
             this.task = task;
         }
 
-        private GetLogEventsResult getEvents(String logStreamName, String nextToken)
+        private GetLogEventsResponse getEvents(String logStreamName, String nextToken)
         {
             try {
                 String logGroupName = task.getLogGroupName();
-                GetLogEventsRequest request = new GetLogEventsRequest()
-                        .withLogGroupName(logGroupName)
-                        .withLogStreamName(logStreamName)
-                        .withStartFromHead(true);
+                GetLogEventsRequest.Builder requestBuilder = GetLogEventsRequest.builder()
+                        .logGroupName(logGroupName)
+                        .logStreamName(logStreamName)
+                        .startFromHead(true);
+
                 String timeRangeFormat = DEFAULT_DATE_FORMAT;
                 if (task.getTimeRangeFormat().isPresent()) {
                     timeRangeFormat = task.getTimeRangeFormat().get();
@@ -290,26 +305,29 @@ public abstract class AbstractCloudwatchLogsInputPlugin
                 if (task.getStartTime().isPresent()) {
                     String startTimeStr = task.getStartTime().get();
                     Date startTime = DateUtils.parseDateStr(startTimeStr, Collections.singletonList(timeRangeFormat));
-                    request.setStartTime(startTime.getTime());
+                    requestBuilder.startTime(startTime.getTime());
                 }
                 if (task.getEndTime().isPresent()) {
                     String endTimeStr = task.getEndTime().get();
                     Date endTime = DateUtils.parseDateStr(endTimeStr, Collections.singletonList(timeRangeFormat));
-                    request.setEndTime(endTime.getTime());
+                    requestBuilder.endTime(endTime.getTime());
                 }
                 if (nextToken != null) {
-                    request.setNextToken(nextToken);
+                    requestBuilder.nextToken(nextToken);
                 }
-                GetLogEventsResult response = client.getLogEvents(request);
+
+                GetLogEventsResponse response = client.getLogEvents(requestBuilder.build());
 
                 return response;
             }
-            catch (AmazonServiceException ex) {
-                if (ex.getErrorType().equals(AmazonServiceException.ErrorType.Client)) {
-                    // HTTP 40x errors. auth error etc. See AWS document for the full list:
-                    // https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/CommonErrors.html
-                    if (ex.getStatusCode() != 400   // 404 Bad Request is unexpected error
-                        || "ExpiredToken".equalsIgnoreCase(ex.getErrorCode())) { // if statusCode == 400 && errorCode == ExpiredToken => throws ConfigException
+            catch (CloudWatchLogsException ex) {
+                if (ex.isThrottlingException() || ex.statusCode() >= 500) {
+                    // Server errors or throttling - let retry policy handle it
+                    throw ex;
+                }
+                if (ex.statusCode() >= 400 && ex.statusCode() < 500) {
+                    // Client errors
+                    if (ex.statusCode() != 400 || "ExpiredToken".equalsIgnoreCase(ex.awsErrorDetails().errorCode())) {
                         throw new ConfigException(ex);
                     }
                 }
@@ -321,34 +339,37 @@ public abstract class AbstractCloudwatchLogsInputPlugin
         {
             try {
                 String logGroupName = task.getLogGroupName();
-                DescribeLogStreamsRequest request = new DescribeLogStreamsRequest();
-                request.setLogGroupName(logGroupName);
+                DescribeLogStreamsRequest.Builder requestBuilder = DescribeLogStreamsRequest.builder()
+                        .logGroupName(logGroupName);
+
                 if (nextToken != null) {
-                    request.setNextToken(nextToken);
+                    requestBuilder.nextToken(nextToken);
                 }
                 if (task.getLogStreamName().isPresent()) {
-                    request.setLogStreamNamePrefix(task.getLogStreamName().get());
+                    requestBuilder.logStreamNamePrefix(task.getLogStreamName().get());
                 }
 
-                DescribeLogStreamsResult response = client.describeLogStreams(request);
+                DescribeLogStreamsResponse response = client.describeLogStreams(requestBuilder.build());
                 if (!logStreams.isEmpty()) {
-                    logStreams.addAll(response.getLogStreams());
+                    logStreams.addAll(response.logStreams());
                 }
                 else {
-                    logStreams = response.getLogStreams();
+                    logStreams = new ArrayList<>(response.logStreams());
                 }
-                if (response.getNextToken() != null) {
-                    logStreams = describeLogStreams(logStreams, response.getNextToken());
+                if (response.nextToken() != null) {
+                    logStreams = describeLogStreams(logStreams, response.nextToken());
                 }
 
                 return logStreams;
             }
-            catch (AmazonServiceException ex) {
-                if (ex.getErrorType().equals(AmazonServiceException.ErrorType.Client)) {
-                    // HTTP 40x errors. auth error etc. See AWS document for the full list:
-                    // https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/CommonErrors.html
-                    if (ex.getStatusCode() != 400   // 404 Bad Request is unexpected error
-                        || "ExpiredToken".equalsIgnoreCase(ex.getErrorCode())) { // if statusCode == 400 && errorCode == ExpiredToken => throws ConfigException
+            catch (CloudWatchLogsException ex) {
+                if (ex.isThrottlingException() || ex.statusCode() >= 500) {
+                    // Server errors or throttling - let retry policy handle it
+                    throw ex;
+                }
+                if (ex.statusCode() >= 400 && ex.statusCode() < 500) {
+                    // Client errors
+                    if (ex.statusCode() != 400 || "ExpiredToken".equalsIgnoreCase(ex.awsErrorDetails().errorCode())) {
                         throw new ConfigException(ex);
                     }
                 }

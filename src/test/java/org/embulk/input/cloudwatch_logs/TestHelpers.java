@@ -1,13 +1,13 @@
 package org.embulk.input.cloudwatch_logs;
 
-import com.amazonaws.services.logs.AWSLogs;
-import com.amazonaws.services.logs.model.CreateLogGroupRequest;
-import com.amazonaws.services.logs.model.CreateLogStreamRequest;
-import com.amazonaws.services.logs.model.DeleteLogGroupRequest;
-import com.amazonaws.services.logs.model.InputLogEvent;
-import com.amazonaws.services.logs.model.PutLogEventsRequest;
-import com.amazonaws.services.logs.model.ResourceNotFoundException;
 import org.embulk.util.config.ConfigMapperFactory;
+import software.amazon.awssdk.services.cloudwatchlogs.CloudWatchLogsClient;
+import software.amazon.awssdk.services.cloudwatchlogs.model.CreateLogGroupRequest;
+import software.amazon.awssdk.services.cloudwatchlogs.model.CreateLogStreamRequest;
+import software.amazon.awssdk.services.cloudwatchlogs.model.DeleteLogGroupRequest;
+import software.amazon.awssdk.services.cloudwatchlogs.model.InputLogEvent;
+import software.amazon.awssdk.services.cloudwatchlogs.model.PutLogEventsRequest;
+import software.amazon.awssdk.services.cloudwatchlogs.model.ResourceNotFoundException;
 
 import java.util.Date;
 import java.util.List;
@@ -33,11 +33,11 @@ public final class TestHelpers
 
     static class CloudWatchLogsTestUtils
     {
-        private final AWSLogs logs;
+        private final CloudWatchLogsClient logs;
         private final String logGroupName;
         private final String logStreamName;
 
-        public CloudWatchLogsTestUtils(AWSLogs logs, String logGroupName, String logStreamName)
+        public CloudWatchLogsTestUtils(CloudWatchLogsClient logs, String logGroupName, String logStreamName)
         {
             this.logs = logs;
             this.logGroupName = logGroupName;
@@ -46,8 +46,9 @@ public final class TestHelpers
 
         public void clearLogGroup()
         {
-            DeleteLogGroupRequest request = new DeleteLogGroupRequest();
-            request.setLogGroupName(logGroupName);
+            DeleteLogGroupRequest request = DeleteLogGroupRequest.builder()
+                    .logGroupName(logGroupName)
+                    .build();
             try {
                 logs.deleteLogGroup(request);
             }
@@ -58,22 +59,25 @@ public final class TestHelpers
 
         public void createLogStream()
         {
-            CreateLogGroupRequest groupRequest = new CreateLogGroupRequest();
-            groupRequest.setLogGroupName(logGroupName);
+            CreateLogGroupRequest groupRequest = CreateLogGroupRequest.builder()
+                    .logGroupName(logGroupName)
+                    .build();
             logs.createLogGroup(groupRequest);
 
-            CreateLogStreamRequest streamRequest = new CreateLogStreamRequest();
-            streamRequest.setLogGroupName(logGroupName);
-            streamRequest.setLogStreamName(logStreamName);
+            CreateLogStreamRequest streamRequest = CreateLogStreamRequest.builder()
+                    .logGroupName(logGroupName)
+                    .logStreamName(logStreamName)
+                    .build();
             logs.createLogStream(streamRequest);
         }
 
         public void putLogEvents(List<InputLogEvent> events)
         {
-            PutLogEventsRequest request = new PutLogEventsRequest()
-                    .withLogGroupName(logGroupName)
-                    .withLogStreamName(logStreamName)
-                    .withLogEvents(events);
+            PutLogEventsRequest request = PutLogEventsRequest.builder()
+                    .logGroupName(logGroupName)
+                    .logStreamName(logStreamName)
+                    .logEvents(events)
+                    .build();
             logs.putLogEvents(request);
         }
     }
